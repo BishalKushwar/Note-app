@@ -1,0 +1,146 @@
+"use client"
+
+import type React from "react"
+
+import { useState, useEffect } from "react"
+import { useAuth } from "@/components/auth-provider"
+import { db } from "@/lib/firebase"
+import { collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Plus, Trash } from "lucide-react"
+import { LoadingSpinner } from "@/components/loading-spinner"
+import { useToast } from "@/hooks/use-toast"
+
+interface Note {
+  id: string
+  title: string
+  content: string
+  createdAt: any
+  userId: string
+}
+
+export function Notes() {
+  const { user } = useAuth()
+  const { toast } = useToast()
+  const [notes, setNotes] = useState<Note[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newNote, setNewNote] = useState({ title: "", content: "" })
+
+  useEffect(() => {
+    if (!user || !db) return
+
+    try {
+      const q = query(collection(db, "notes"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const notesData = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Note[]
+        setNotes(notesData)
+        setLoading(false)
+      })
+
+      return () => unsubscribe()
+    } catch (error) {
+      console.error("Error fetching notes:", error)
+      setLoading(false)
+      toast({
+        title: "Error",
+        description: "Failed to load notes. Please try again later.",
+        variant: "destructive",
+      })
+    }
+  }, [user, toast])
+
+  const handleCreateNote = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user || !db || !newNote.title || !newNote.content) return
+
+    try {
+      await addDoc(collection(db, "notes"), {
+        ...newNote,
+        userId: user.uid,
+        createdAt: new Date(),
+      })
+      setNewNote({ title: "", content: "" })
+      toast({
+        title: "Success",
+        description: "Note created successfully",
+      })
+    } catch (error) {
+      console.error("Error creating note:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create note. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteNote = async (noteId: string) => {
+    if (!db) return
+
+    try {
+      await deleteDoc(doc(db, "notes", noteId))
+      toast({
+        title: "Success",
+        description: "Note deleted successfully",
+      })
+    } catch (error) {
+      console.error("Error deleting note:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete note. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  if (loading) {
+    return <LoadingSpinner />
+  }
+
+  return (
+    <div className="space-y-4">
+      <form onSubmit={handleCreateNote} className="space-y-4">
+        <Input
+          placeholder="Note title"
+          value={newNote.title}
+          onChange={(e) => setNewNote({ ...newNote, title: e.target.value })}
+          required
+        />
+        <Textarea
+          placeholder="Note content"
+          value={newNote.content}
+          onChange={(e) => setNewNote({ ...newNote, content: e.target.value })}
+          required
+        />
+        <Button type="submit">
+          <Plus className="mr-2 h-4 w-4" />
+          Add Note
+        </Button>
+      </form>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {notes.map((note) => (
+          <Card key={note.id}>
+            <CardContent className="p-4">
+              <h3 className="font-semibold">{note.title}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{note.content}</p>
+            </CardContent>
+            <CardFooter className="flex justify-end p-4 pt-0">
+              <Button variant="ghost" size="icon" onClick={() => handleDeleteNote(note.id)}>
+                <Trash className="h-4 w-4" />
+                <span className="sr-only">Delete note</span>
+              </Button>
+            </CardFooter>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
+
