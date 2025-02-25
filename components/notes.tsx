@@ -1,11 +1,9 @@
 "use client"
-
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { db } from "@/lib/firebase"
-import { collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore"
+import { collection, query, where, orderBy, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -20,6 +18,7 @@ interface Note {
   content: string
   createdAt: any
   userId: string
+  recommendation?: string // New field for AI recommendations
 }
 
 export function Notes() {
@@ -28,13 +27,12 @@ export function Notes() {
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState({ title: "", content: "" })
+  const [generatingRecommendation, setGeneratingRecommendation] = useState(false)
 
   useEffect(() => {
     if (!user || !db) return
-
     try {
       const q = query(collection(db, "notes"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))
-
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const notesData = snapshot.docs.map((doc) => ({
           id: doc.id,
@@ -43,7 +41,6 @@ export function Notes() {
         setNotes(notesData)
         setLoading(false)
       })
-
       return () => unsubscribe()
     } catch (error) {
       console.error("Error fetching notes:", error)
@@ -59,7 +56,6 @@ export function Notes() {
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user || !db || !newNote.title || !newNote.content) return
-
     try {
       await addDoc(collection(db, "notes"), {
         ...newNote,
@@ -83,7 +79,6 @@ export function Notes() {
 
   const handleDeleteNote = async (noteId: string) => {
     if (!db) return
-
     try {
       await deleteDoc(doc(db, "notes", noteId))
       toast({
@@ -97,6 +92,45 @@ export function Notes() {
         description: "Failed to delete note. Please try again.",
         variant: "destructive",
       })
+    }
+  }
+
+  const generateAiRecommendation = async (noteId: string, noteContent: string) => {
+    if (!noteContent.trim()) return
+    setGeneratingRecommendation(true)
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: noteContent }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to generate recommendation")
+      }
+
+      const data = await response.json()
+
+      // Update the note in Firestore with the recommendation
+      await updateDoc(doc(db, "notes", noteId), {
+        recommendation: data.recommendation,
+      })
+
+      toast({
+        title: "Success",
+        description: "AI recommendation generated and saved successfully",
+      })
+    } catch (error) {
+      console.error("Error generating AI recommendation:", error)
+      toast({
+        title: "Error",
+        description: "Failed to generate or save AI recommendation. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setGeneratingRecommendation(false)
     }
   }
 
@@ -130,8 +164,22 @@ export function Notes() {
             <CardContent className="p-4">
               <h3 className="font-semibold">{note.title}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{note.content}</p>
+              {note.recommendation && (
+                <div className="mt-4 p-2 border rounded-md bg-secondary">
+                  <p className="text-xs font-medium">AI Recommendation:</p>
+                  <p className="text-sm">{note.recommendation}</p>
+                </div>
+              )}
             </CardContent>
-            <CardFooter className="flex justify-end p-4 pt-0">
+            <CardFooter className="flex justify-between p-4 pt-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => generateAiRecommendation(note.id, note.content)}
+                disabled={generatingRecommendation}
+              >
+                {generatingRecommendation ? "Generating..." : "Get AI Recommendation"}
+              </Button>
               <Button variant="ghost" size="icon" onClick={() => handleDeleteNote(note.id)}>
                 <Trash className="h-4 w-4" />
                 <span className="sr-only">Delete note</span>
@@ -143,4 +191,3 @@ export function Notes() {
     </div>
   )
 }
-
